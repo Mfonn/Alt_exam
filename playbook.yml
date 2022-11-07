@@ -1,0 +1,437 @@
+---
+ - name: Mfon Playbook
+   hosts: all
+   become: yes
+   become_user: root
+ 
+   tasks:
+     - name: Update apt packages 
+       apt:
+         update_cache: yes
+         autoclean: yes 
+         autoremove: yes
+         upgrade: yes
+ 
+     - name: Install dependencies
+       apt:
+         pkg:
+         - git
+         - apache2
+         - wget
+         - zip
+         - unzip
+         - curl
+         - libapache2-mod-php
+
+     - name: Install Pre-installation packages
+       apt:
+        pkg:
+        - software-properties-common
+        - lsb-release
+        - apt-transport-https
+        - ca-certificates
+        - gnupg2
+
+     - name: Repository we will be working with
+       apt_repository:
+        repo: 'ppa:ondrej/php'
+        state: present
+   
+     - name: Update apt and clean up
+       apt:
+         update_cache: yes
+         autoclean: yes
+   
+     - name: Install PHP version 8.1
+       apt:
+        name: php8.1
+        update_cache: yes
+        state: latest
+       
+ 
+     - name: Update "apt"
+       apt:
+         update_cache: yes
+         autoclean: yes 
+ 
+     - name: Install php and required extension packages
+       apt:
+         pkg:
+         - php8.1-cli
+         - php8.1-pgsql
+         - php8.1-xml
+         - php8.1-xmlrpc
+         - php8.1-curl
+         - php8.1-gd
+         - php8.1-imagick
+         - php8.1-common
+         - php8.1-dev
+         - php8.1-imap
+         - php8.1-mbstring
+         - php8.1-opcache
+         - php8.1-soap
+         - php8.1-zip
+         - php8.1-intl
+         - php8.1-mysql
+         - php-curl
+
+     - name: Update apt packages
+       apt:
+        update_cache: yes
+        upgrade: yes
+
+
+ 
+ # Composer
+     - name: Download Composer via curl
+       get_url:
+         url: https://getcomposer.org/installer
+         dest: /tmp/installer
+
+     - name: Install composer
+       shell: cat /tmp/installer | php -- --install-dir=/usr/local/bin
+       args:
+          creates: /usr/local/bin/composer
+
+     - name: to call globally, rename composer.phar to composer
+       shell: mv /usr/local/bin/composer.phar /usr/local/bin/composer
+       args:
+          creates: /usr/local/bin/composer
+
+     - name: enable executable permission
+       file:
+          path: /usr/local/bin/composer
+          mode: a+x
+          state: file 
+
+
+  # Configure php.ini file
+
+     - name: set max filesize upload
+       become: yes
+       ini_file:
+          path: /etc/php8.1/apache2/php.ini
+          section: PHP
+          option: upload_max_filesize
+          value: 64M
+
+     - name: set post_max_size
+       become: yes
+       ini_file:
+          path: /etc/php/8.1/apache2/php.ini
+          section: PHP
+          option: post_max_size
+          value: 128M
+
+     - name: set memory limit
+       become: yes
+       ini_file:
+          path: /etc/php/8.1/apache2/php.ini
+          section: PHP
+          option: memory_limit
+          value: 256M
+
+     - name: set max_execution_time
+       become: yes
+       ini_file:
+          path: /etc/php/8.1/apache2/php.ini
+          section: PHP
+          option: max_execution_time
+          value: 300
+
+     - name: set max_input_vars
+       become: yes
+       ini_file:
+          path: /etc/php/8.1/apache2/php.ini
+          section: PHP
+          option: max_input_time
+          value: 5000
+
+     - name: set max_input_time
+       become: yes
+       ini_file:
+          path: /etc/php/8.1/apache2/php.ini
+          section: PHP
+          option: max_input_time
+          value: 120
+ 
+ 
+ # database MySQL
+
+     - name: Update "apt" 
+       apt:
+         update_cache: yes
+         autoclean: yes 
+         autoremove: yes
+ 
+     - name: Install MySQL and required dependencies
+       package: 
+         name: "{{item}}" 
+         state: present
+         update_cache: yes
+       loop:
+         - mysql-server
+         - mysql-client
+         - python3-mysqldb
+         - libmysqlclient-dev
+       become: yes
+    
+     - name: start and enable mysql service
+       service:
+          name: mysql
+          state: started
+          enabled: yes
+
+     - name: ceating mysql user 
+       mysql_user:
+          name: "mfon"
+          password: "?talk2Me"
+          priv: '*.*:ALL'
+          host: '%'
+          state: present
+
+     - name: creating db
+       mysql_db:
+          name: "mfon"
+          state: present
+    
+     - name: Enable remote login to mysql
+       lineinfile:
+          path: /etc/mysql/mysql.conf.d/mysqld.cnf
+          regexp: '^bind-address'
+          line: 'bind-address= 0.0.0.0'
+          backup: yes
+
+     - name: RESTART mysql
+       service:
+          name: mysql
+          state: restarted 
+
+
+  # clone Github repo and configue files in it
+
+     - name: Obtain latest code from Github
+       git: >
+          repo=https://github.com/f1amy/laravel-realworld-example-app.git
+          dest=/opt/mfon
+          force=yes
+          accept_hostkey=yes
+
+     - name: copy laravel repo
+       shell: sudo mv -f /opt/mfon /var/www/html/
+       ignore_errors: true
+
+     - name: Permission for composer Installation
+       shell: sudo chmod -R 777 /var/www/html/mfon/
+
+     - name: Change Permissions
+       shell: sudo chown -R www-data:www-data /var/www/html/mfon/
+
+     - name: Change permissions for storage
+       shell: |
+          chmod -R 775 /var/www/html/mfon/storage
+          chgrp -R www-data /var/www/html/mfon/storage /var/www/html/mfon/bootstrap/cache
+          chmod -R ug+rwx /var/www/html/mfon/storage /var/www/html/mfon/bootstrap/cache
+
+     - name: Create the web.php file in the routes directory
+       ansible.builtin.copy:
+         dest: /var/www/html/mfon/routes/web.php
+         content: |
+           <?php
+ 
+           Route::get('/', function () {
+               return view('welcome');
+           });
+
+
+   # Install Composer Deoendencies in mfon directory
+  
+     - name: Composer Install
+       shell:
+        cmd: curl -sS https://getcomposer.org/installer | php
+
+   # Move composer binary to system path
+     - name: Move composer
+       command: mv composer.phar /usr/local/bin/composer
+    
+     - name: Make composer executable
+       file:
+        path: /usr/local/bin/composer
+        mode: a+x
+        state: file
+
+
+     
+     - name: Edit the .env file
+       ansible.builtin.copy:
+         dest: /var/www/html/mfon/.env
+         content: |
+           APP_NAME="Laravel Realworld Example App"
+           APP_ENV=local
+           APP_KEY=
+           APP_DEBUG=true
+           APP_URL=http://localhost
+           APP_PORT=3000
+ 
+           LOG_CHANNEL=stack
+           LOG_DEPRECATIONS_CHANNEL=null
+           LOG_LEVEL=debug
+ 
+           DB_CONNECTION=mysql
+           DB_HOST=localhost
+           DB_PORT=3306
+           DB_DATABASE=laravel-realworld
+           DB_USERNAME=use mfon
+           DB_PASSWORD=use ?talk2Me
+ 
+           BROADCAST_DRIVER=log
+           CACHE_DRIVER=file
+           FILESYSTEM_DISK=local
+           QUEUE_CONNECTION=sync
+           SESSION_DRIVER=file
+           SESSION_LIFETIME=120
+ 
+           MEMCACHED_HOST=127.0.0.1
+ 
+           REDIS_HOST=127.0.0.1
+           REDIS_PASSWORD=null
+           REDIS_PORT=6379
+ 
+           MAIL_MAILER=smtp
+           MAIL_HOST=mailhog
+           MAIL_PORT=1025
+           MAIL_USERNAME=null
+           MAIL_PASSWORD=null
+           MAIL_ENCRYPTION=null
+           MAIL_FROM_ADDRESS="hello@example.com"
+           MAIL_FROM_NAME="${APP_NAME}"
+ 
+           AWS_ACCESS_KEY_ID=
+           AWS_SECRET_ACCESS_KEY=
+           AWS_DEFAULT_REGION=us-east-1
+           AWS_BUCKET=
+           AWS_USE_PATH_STYLE_ENDPOINT=false
+ 
+           PUSHER_APP_ID=
+           PUSHER_APP_KEY=
+           PUSHER_APP_SECRET=
+           PUSHER_APP_CLUSTER=mt1
+ 
+           MIX_PUSHER_APP_KEY="${PUSHER_APP_KEY}"
+           MIX_PUSHER_APP_CLUSTER="${PUSHER_APP_CLUSTER}"
+ 
+           L5_SWAGGER_GENERATE_ALWAYS=true
+           SAIL_XDEBUG_MODE=develop,debug
+           SAIL_SKIP_CHECKS=true
+ 
+
+     # Add .htaccess to mfon directory
+ 
+     - name: copy .htaccess configuration
+       copy:
+        dest: /var/www/html/mfon/.htaccess
+        content: | 
+          <IfModule mod_rewrite.c>
+          RewriteEngine On
+              
+          RewriteCond %{HTTPS} off
+          RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+                
+          RewriteCond %{REQUEST_URI} !^/public/
+          RewriteCond %{REQUEST_FILENAME} !-d
+          RewriteCond %{REQUEST_FILENAME} !-f
+              
+          RewriteRule ^(.*)$ /public/$1
+          RewriteRule ^(/)?$ public/index.php [L]
+          </IfModule>
+  
+
+
+ 
+ # Remainder
+ 
+     - name: Create an apache virtual host configuration file
+       ansible.builtin.copy:
+         dest: /etc/apache2/sites-available/mfon.conf
+         content: |
+           <VirtualHost *:80>
+               ServerAdmin admin@mfon.me
+               ServerName mfon.me
+               ServerAlias www.mfon.me
+               DocumentRoot /var/www/mfon/
+     
+               <Directory /var/www/>
+                   AllowOverride All
+               </Directory>
+     
+               ErrorLog ${APACHE_LOG_DIR}/error.log
+               CustomLog ${APACHE_LOG_DIR}/access.log combined
+           </VirtualHost>
+ 
+     - name: Additional permissions
+       shell: |
+        sudo chgrp -R www-data /var/www/html/mfon/storage /var/www/html/mfon/bootstrap/cache
+        sudo chmod -R ug+rwx /var/www/html/mfon/storage /var/www/html/mfon/bootstrap/cache
+
+
+     - name: Set permission for mfon.conf file
+       shell: sudo chmod -R 777 /etc/apache2/sites-available/mfon.conf
+
+    ## - name: Php artisan key generate and enable mfon.conf
+    ##   shell: cd /var/www/html/mfon && php artisan key:generate
+
+     - name: Enable a2enmod rewrite
+       ansible.builtin.command: a2enmod rewrite
+ 
+     - name: Disable default apache page and enable laravel page
+       ansible.builtin.command: a2dissite 000-default.conf
+ 
+     - name: Enable laravel page
+       ansible.builtin.command: a2ensite mfon.conf
+ 
+     - name: set timezone to Africa/Lagos
+       timezone:
+         name: Africa/Lagos
+
+     - name: Restart apache web server
+       ansible.builtin.command: systemctl restart apache2
+
+    # install Certbot
+     - name: Install Certbot
+       shell: |
+          apt update
+          apt install snapd -y
+          snap install core
+          snap refresh core
+       become: yes
+
+    # Install Certbot tool
+     - name: Install Certbot tool
+       shell: snap install --classic certbot
+       become: yes
+
+    # Install Certbot tool
+     - name: Install Certbot tool
+       shell: ln -s /snap/bin/certbot /usr/bin/certbot
+       ignore_errors: yes
+
+
+    # install my certificates
+
+     - name: Install my certificates
+       shell: certbot --apache --agree-tos --redirect -m admin@mfon.me -d mfon.me -d www.mfon.me
+       ignore_errors: yes
+
+   # Install Postgresql
+  
+     - name: Copy Script to remote
+       ansible.builtin.copy:
+         src: /home/mfybaby/Documents/AltSch/exam2/psql.sh
+         dest: /root/psql.sh
+         owner: root
+         group: root
+         mode: '0777'
+   
+     - name: Execute pgsql script
+       command: sh /root/psql.sh
+       ignore_errors: true
